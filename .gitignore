@@ -30,3 +30,4 @@ agentcore/.env.local
 agentcore/.cli/
 agentcore/cdk/node_modules/
 agentcore/cdk/cdk.out/
+agentcore/.cache/
