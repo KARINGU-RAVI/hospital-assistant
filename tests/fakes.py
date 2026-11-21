@@ -23,6 +23,7 @@ class FakeModel(Model):
     def __init__(self, reply: str = "ok", errors: list[Exception] | None = None, script: list | None = None):
         self.reply, self.errors, self.script, self.calls = reply, list(errors or []), list(script or []), 0
         self.received: list[list[dict]] = []  # the messages sent on each model call
+        self.system_prompts: list[str] = []
 
     def update_config(self, **kwargs):
         pass
@@ -37,6 +38,7 @@ class FakeModel(Model):
     async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
         self.calls += 1
         self.received.append(json.loads(json.dumps(messages, default=str)))
+        self.system_prompts.append(system_prompt or "")
         if self.errors:
             raise self.errors.pop(0)
         step = self.script.pop(0) if self.script else self.reply

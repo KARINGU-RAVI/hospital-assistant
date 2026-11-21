@@ -135,3 +135,31 @@ def test_confirmation_step_rejects_past_time(setup, monkeypatch):
 def test_prompt_says_never_assume_today():
     from agent.agent import SYSTEM_PROMPT
     assert "Never assume today" in SYSTEM_PROMPT and len(SYSTEM_PROMPT.split()) < 300
+
+
+# --- Phase 4 wiring: guardrail -> memory -> model -> guardrail -> memory ---
+def test_blocked_input_never_calls_the_model(setup):
+    fake, _, _, _ = setup
+    result = chat("what dose of paracetamol should I take?", [], *PATIENT)
+    assert result["model_used"] is None and "medical advice" in result["reply"]
+    assert fake.calls == 0
+
+
+def test_phone_number_masked_in_reply_and_history(setup):
+    fake, _, _, _ = setup
+    fake.script = ["Call the desk on 98765 43210."]
+    result = chat("what's the desk number?", [], *PATIENT)
+    assert result["reply"] == "Call the desk on [PHONE]."
+    assert result["messages"][-1]["content"][0]["text"] == "Call the desk on [PHONE]."
+
+
+def test_booking_remembers_usual_doctor_for_next_session(setup):
+    fake, _, slot, _ = setup
+    messages = _turn(fake, [], "book tomorrow 10:00", _book(slot), "Confirm?")
+    _turn(fake, messages, "yes", _book(slot), "Booked!")
+    from agent import memory
+    doctor = memory.load_facts(PATIENT[0])["preferred_doctor"]
+    assert doctor.startswith("Dr. ")
+    fake.script = ["Sure."]
+    chat("book with my usual doctor", [], *PATIENT, session_id="new-session")  # new session, empty history
+    assert f"preferred_doctor: {doctor}" in fake.system_prompts[-1]

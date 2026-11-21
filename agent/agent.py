@@ -5,11 +5,13 @@ Tool wrappers here keep results compact (free-tier token limits); agent/tools/*.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 
 from strands import ToolContext, tool
 
+from agent import guardrails, memory
 from agent.db import connect
 from agent.models import run_with_fallback
 from agent.tools import booking
@@ -40,6 +42,7 @@ Rules:
   answers, say "I don't have that information, please contact the front desk".
 - After booking, give the booking ID (starts with HSP-).
 - Never show slot ids or other internal IDs (booking IDs are fine).
+- If the patient asks for their usual doctor, use preferred_doctor from what is known about them.
 - Keep replies short: two or three sentences, or a short list of slots.
 """
 
@@ -147,14 +150,58 @@ def book_appointment(slot_id: int, patient_id: str, patient_name: str, tool_cont
 TOOLS = [tool(find_department), check_availability, book_appointment, tool(manage_booking), tool(search_hospital_info)]
 
 
+def booked_doctor(new_messages: list[dict]) -> str | None:
+    """Doctor of a booking that succeeded in this turn (from book_appointment tool results), if any."""
+    doctor = None
+    for message in new_messages:
+        for block in message.get("content", []):
+            for item in block.get("toolResult", {}).get("content", []):
+                try:
+                    data = json.loads(item.get("text", ""))
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(data, dict) and data.get("booking_id") and data.get("doctor"):
+                    doctor = data["doctor"]
+    return doctor
+
+
+def _replace_last_reply(messages: list[dict], text: str) -> list[dict]:
+    """Store the guarded reply (e.g. masked phone numbers) in the history too."""
+    if messages and messages[-1].get("role") == "assistant":
+        messages = messages[:-1] + [{"role": "assistant", "content": [{"text": text}]}]
+    return messages
+
+
 def chat(
     prompt: str,
     session_messages: list[dict] | None,
     patient_id: str,
     patient_name: str,
     patient_facts: dict[str, str] | None = None,
+    session_id: str = "local",
 ) -> dict:
-    """Run one chat turn. Returns {"reply", "messages" (full history), "model_used" (logs only)}."""
-    system_prompt = SYSTEM_PROMPT + "\n" + _patient_context(patient_id, patient_name, patient_facts)
-    reply, messages, model_used = run_with_fallback(prompt, session_messages or [], TOOLS, system_prompt)
-    return {"reply": reply, "messages": messages, "model_used": model_used}
+    """Run one chat turn: guardrail -> memory -> model -> guardrail -> memory.
+
+    Returns {"reply", "messages" (full history), "model_used" (logs only, never the UI)}.
+    """
+    history = session_messages or []
+    checked = guardrails.check_input(prompt)
+    if checked["blocked"]:
+        return {"reply": checked["text"], "messages": history, "model_used": None}
+
+    facts = {**memory.load_facts(patient_id), **(patient_facts or {})}
+    system_prompt = SYSTEM_PROMPT + "\n" + _patient_context(patient_id, patient_name, facts)
+    reply, messages, model_used = run_with_fallback(prompt, history, TOOLS, system_prompt)
+    if model_used is None:  # every model failed: busy message, nothing to guard or remember
+        return {"reply": reply, "messages": messages, "model_used": None}
+
+    guarded = guardrails.check_output(reply)
+    if guarded["text"] != reply:
+        messages = _replace_last_reply(messages, guarded["text"])
+
+    new_facts = {"name": patient_name}
+    doctor = booked_doctor(messages[len(history):])
+    if doctor:
+        new_facts["preferred_doctor"] = doctor
+    memory.save_turn(patient_id, session_id, prompt, guarded["text"], new_facts)
+    return {"reply": guarded["text"], "messages": messages, "model_used": model_used}
