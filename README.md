@@ -12,7 +12,7 @@ Repository: https://github.com/KARINGU-RAVI/hospital-assistant
 ## Status
 - [x] Phase 0 — setup
 - [x] Phase 1 — data + tools
-- [ ] Phase 2 — agent + model fallback
+- [x] Phase 2 — agent + model fallback
 - [ ] Phase 3 — RAG
 - [ ] Phase 4 — Guardrails + Memory
 - [ ] Phase 5 — AgentCore entrypoint + Streamlit UI
