@@ -1,0 +1,14 @@
+{
+  "name": "hospitalfrontdesk",
+  "version": 2,
+  "managedBy": "CDK",
+  "runtimes": [
+    {
+      "name": "frontdesk",
+      "build": "CodeZip",
+      "entrypoint": "main.py",
+      "codeLocation": "build/runtime",
+      "runtimeVersion": "PYTHON_3_12"
+    }
+  ]
+}

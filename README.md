@@ -38,6 +38,28 @@ One chat turn makes several model calls (one per tool step), so each request is 
 
 AWS (Phases 4–6) costs a few rupees to about ₹60 in total; resources are torn down the same day.
 
+## Cloud limitations (AgentCore Runtime)
+- **Bookings last only for one session in the cloud.** Each runtime session runs in its own microVM, and
+  its disk is wiped when the session ends (after 15 minutes idle, 8 hours at most). The bundled SQLite
+  database is copied to `/tmp` at start, so bookings and local patient facts don't carry across
+  sessions. A returning patient's "usual doctor" comes from AgentCore Memory long-term records, which
+  appear a minute or more after the conversation. Locally, everything persists in `data/hospital.db`.
+- API keys are passed as plain-text runtime environment variables. That's acceptable for a one-day demo
+  with free-tier keys; a longer-lived deploy should use AWS Secrets Manager.
+
+## Teardown
+1. `python scriptsws_teardown.py` deletes the guardrail and the memory (type DELETE).
+2. `agentcore remove all --yes`, then `agentcore deploy --yes`, deletes the deployed runtime stack.
+3. **Final teardown only:** the first `agentcore deploy` creates the standard CDK bootstrap stack
+   `CDKToolkit`, which step 2 does not remove. Its S3 bucket is versioned and retained when the stack
+   is deleted, according to the installed bootstrap template (the CDK docs give no removal steps):
+   ```powershell
+   aws cloudformation delete-stack --stack-name CDKToolkit --region ap-south-1
+   aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region ap-south-1
+   ```
+   Then, in the S3 console, open bucket `cdk-hnb659fds-assets-<account-id>-ap-south-1` and choose
+   **Empty** (this removes all versions), then **Delete**.
+
 ## Setup (Windows PowerShell, Python 3.12)
 ```powershell
 python -m venv .venv

@@ -3,7 +3,22 @@
 Run: python scripts\\aws_teardown.py
 
 Finds resources by NAME (same names as aws_setup.py), so it works even if .env is incomplete.
-Phase 4: guardrail + memory. Phase 6 adds the AgentCore runtime and its ECR repository.
+Phase 4: guardrail + memory.
+
+Phase 6 resources are removed with the AgentCore CLI, from the project folder:
+    agentcore remove all --yes
+    agentcore deploy --yes          # an empty project tears down the deployed stack
+
+FINAL TEARDOWN (only when you are completely done with AgentCore in this account/region):
+the AgentCore CLI creates the standard CDK bootstrap stack "CDKToolkit" on first deploy, and
+`agentcore remove all` does not delete it. From the installed bootstrap template (aws-cdk, version 32):
+its S3 staging bucket is versioned and has DeletionPolicy Retain (it survives the stack); the ECR repo
+has no Retain policy (code-zip deploys push no images to it). The CDK docs give no removal procedure,
+so these steps are from the template itself:
+    aws cloudformation delete-stack --stack-name CDKToolkit --region ap-south-1
+    aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region ap-south-1
+  Then in the S3 console: bucket cdk-hnb659fds-assets-<account-id>-ap-south-1 -> Empty (removes all
+  versions) -> Delete. Check CloudFormation, S3 and ECR show nothing named cdk-hnb659fds-*.
 """
 from __future__ import annotations
 
@@ -68,6 +83,8 @@ def main() -> None:
     print(f"Memories deleted: {m}")
     print("Done. Set GUARDRAILS_ENABLED=false and MEMORY_ENABLED=false in .env. "
           "Check the AWS console that nothing is left.")
+    print("If you deployed the runtime (Phase 6): run `agentcore remove all --yes` then `agentcore deploy --yes`.")
+    print("Final teardown of the CDK bootstrap stack: see the notes at the top of this file and the README.")
 
 
 if __name__ == "__main__":

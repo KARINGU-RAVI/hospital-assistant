@@ -21,3 +21,12 @@ data/models/
 .idea/
 .DS_Store
 Thumbs.db
+
+# AgentCore deploy (Phase 6): generated, may contain API keys or the account ID
+build/
+agentcore/agentcore.json
+agentcore/aws-targets.json
+agentcore/.env.local
+agentcore/.cli/
+agentcore/cdk/node_modules/
+agentcore/cdk/cdk.out/
