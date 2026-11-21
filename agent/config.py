@@ -4,7 +4,9 @@ Run `python -m agent.config` to print the current settings (keys are never shown
 """
 from __future__ import annotations
 
+import logging
 import os
+import re
 from dataclasses import dataclass, fields
 from functools import lru_cache
 from pathlib import Path
@@ -82,6 +84,32 @@ class Settings:
     models_path: Path
 
 
+def duplicate_env_keys(path: Path = PROJECT_ROOT / ".env") -> list[str]:
+    """Keys defined more than once in .env. python-dotenv keeps the LAST one, which silently
+    hides earlier values (e.g. IDs pasted above the template's empty lines)."""
+    if not path.exists():
+        return []
+    seen: dict[str, int] = {}
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        match = re.match(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
+        if match:
+            seen[match.group(1)] = seen.get(match.group(1), 0) + 1
+    return sorted(k for k, n in seen.items() if n > 1)
+
+
+def warn_duplicate_env_keys() -> None:
+    """Warn once (at import) about duplicated .env keys."""
+    duplicates = duplicate_env_keys()
+    if duplicates:
+        logging.getLogger(__name__).warning(
+            "config: .env defines %s more than once; the LAST value wins. Remove the extra lines.",
+            ", ".join(duplicates),
+        )
+
+
+warn_duplicate_env_keys()
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     chain = tuple(m.strip().lower() for m in _str("MODEL_CHAIN", "gemini,groq,openrouter").split(",") if m.strip())
@@ -131,5 +159,6 @@ def masked(settings: Settings) -> dict[str, str]:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.WARNING, format="%(message)s")
     for key, val in masked(get_settings()).items():
         print(f"{key:20} {val}")

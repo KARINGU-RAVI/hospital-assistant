@@ -32,7 +32,8 @@ def test_six_faq_files_are_chunked_by_heading():
     chunks = rag.load_chunks(FAQ)
     assert {c["source"] for c in chunks} == {
         "visiting-hours.md", "departments.md", "insurance.md", "parking-and-location.md",
-        "documents-to-bring.md", "cancellation-policy.md"}
+        "documents-to-bring.md", "cancellation-policy.md", "emergencies-and-contact.md"}
+    assert {c["title"] for c in chunks} >= {"Visiting hours", "Departments", "Emergencies and contact"}
     assert all(c["text"].count("\n## ") == 0 and " - " in c["text"].split("\n")[0] for c in chunks)
     assert not any("fictional clinic" in c["text"] and len(c["text"]) < 120 for c in chunks)  # no intro chunk
 
@@ -52,7 +53,7 @@ def test_missing_index_falls_back_to_keyword(settings, caplog):
     s = settings()
     with caplog.at_level(logging.WARNING, logger="agent.tools.rag"):
         result = rag.search_hospital_info("when can I visit")
-    assert result["method"] == "keyword" and result["answers"][0]["source"] == "visiting-hours.md"
+    assert result["method"] == "keyword" and result["answers"][0]["source"] == "Visiting hours"
     assert [r.getMessage() for r in caplog.records] == ["fallback: rag vector -> keyword (FileNotFoundError)"]
     assert not s.chroma_path.exists()  # we never let Chroma create an empty DB
 
@@ -96,9 +97,11 @@ def vector_index(settings):
 
 
 @pytest.mark.parametrize("question, source", [
-    ("what time can family come", "visiting-hours.md"),
-    ("which insurance do you accept", "insurance.md"),
-    ("is there parking at the clinic", "parking-and-location.md"),
+    ("what time can family come", "Visiting hours"),
+    ("which insurance do you accept", "Insurance and payment"),
+    ("is there parking at the clinic", "Parking and location"),
+    ("do you have an emergency department?", "Emergencies and contact"),
+    ("how can I contact the clinic?", "Emergencies and contact"),
 ])
 def test_vector_finds_right_file(vector_index, question, source):
     result = rag.search_hospital_info(question)
@@ -116,3 +119,18 @@ def test_rebuild_replaces_collection(vector_index):
     assert rag.build_index(s.faq_path, s.chroma_path, s.models_path, local_only=True) == first
     _, collection = rag._load_vector(str(s.chroma_path), str(s.models_path))
     assert collection.count() == first
+
+
+def test_sources_are_friendly_names_not_files(settings):
+    settings(RAG_MODE="keyword")
+    for question in ("visiting hours", "parking", "insurance", "cancel"):
+        for answer in rag.search_hospital_info(question)["answers"]:
+            assert not answer["source"].endswith(".md")
+
+
+def test_faq_has_no_phone_numbers_or_doctor_names():
+    from agent.guardrails import mask_phones
+    for path in FAQ.glob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        assert mask_phones(text) == text, path.name
+        assert "Dr." not in text, path.name

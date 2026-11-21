@@ -29,7 +29,7 @@ NO_MATCH = {"answers": [], "note": "no matching clinic information"}
 # --- chunks -------------------------------------------------------------------------------------
 
 def load_chunks(faq_path: Path) -> list[dict]:
-    """Split each FAQ file into chunks by "##" heading: {"id", "text", "source"}.
+    """Split each FAQ file into chunks by "##" heading: {"id", "text", "source" (file), "title" (page title)}.
 
     Each chunk starts with the file title and heading so it makes sense on its own.
     Text before the first "##" (title + disclaimer) is not a chunk. Files without headings are
@@ -46,7 +46,7 @@ def load_chunks(faq_path: Path) -> list[dict]:
         else:
             pieces = [text[i : i + CHUNK_CHARS].strip() for i in range(0, len(text), CHUNK_CHARS)]
         for n, piece in enumerate(pieces):
-            chunks.append({"id": f"{path.name}#{n}", "text": piece, "source": path.name})
+            chunks.append({"id": f"{path.name}#{n}", "text": piece, "source": path.name, "title": title})
     return chunks
 
 
@@ -81,7 +81,7 @@ def build_index(faq_path: Path, chroma_path: Path, models_path: Path, local_only
         ids=[c["id"] for c in chunks],
         embeddings=vectors,
         documents=[c["text"] for c in chunks],
-        metadatas=[{"source": c["source"]} for c in chunks],
+        metadatas=[{"source": c["source"], "title": c["title"]} for c in chunks],
     )
     _load_vector.cache_clear()
     return len(chunks)
@@ -99,13 +99,13 @@ def _load_vector(chroma_path: str, models_path: str):
 
 
 def vector_search(question: str, chroma_path: Path, models_path: Path, k: int = TOP_K) -> list[dict]:
-    """Top-k chunks with their cosine distance: [{"text", "source", "distance"}]."""
+    """Top-k chunks with their cosine distance: [{"text", "source", "title", "distance"}]."""
     embedder, collection = _load_vector(str(chroma_path), str(models_path))
     result = collection.query(
         query_embeddings=[embed_query(embedder, question)], n_results=k, include=["documents", "metadatas", "distances"]
     )
     return [
-        {"text": doc, "source": meta["source"], "distance": dist}
+        {"text": doc, "source": meta["source"], "title": meta.get("title", meta["source"]), "distance": dist}
         for doc, meta, dist in zip(result["documents"][0], result["metadatas"][0], result["distances"][0])
     ]
 
@@ -151,24 +151,26 @@ def keyword_search(question: str, faq_path: Path, k: int = TOP_K) -> list[dict]:
         if score:
             scored.append((score, chunk))
     scored.sort(key=lambda pair: -pair[0])
-    return [{"text": c["text"], "source": c["source"]} for _, c in scored[:k]]
+    return [{"text": c["text"], "source": c["source"], "title": c["title"]} for _, c in scored[:k]]
 
 
 # --- tool ---------------------------------------------------------------------------------------
 
 def _compact(hits: list[dict]) -> list[dict]:
-    return [{"text": h["text"][:MAX_CHARS], "source": h["source"]} for h in hits]
+    """What the model sees: the text and a friendly page name (never a file name)."""
+    return [{"text": h["text"][:MAX_CHARS], "source": h["title"]} for h in hits]
 
 
 def search_hospital_info(question: str) -> dict:
     """Search Sunrise Clinic's information pages (visiting hours, departments, insurance and fees,
-    parking and location, documents to bring, cancellation policy).
+    parking and location, documents to bring, cancellation policy, emergencies and contact, opening hours).
 
     Args:
         question: The patient's question, e.g. "what are the visiting hours?".
 
     Returns:
-        {"answers": [{"text", "source"}], "method"}; answers is empty (with a "note") if nothing matches.
+        {"answers": [{"text", "source" (page name)}], "method"}; answers is empty (with a "note") if
+        nothing matches.
     """
     s = get_settings()
     if s.rag_mode != "keyword":

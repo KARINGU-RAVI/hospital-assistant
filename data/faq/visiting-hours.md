@@ -20,5 +20,5 @@ wards. Visitors with a cold, cough or fever are asked to postpone their visit. O
 patients should be checked with the ward nurse first.
 
 ## Clinic opening hours
-The outpatient clinic is open Monday to Saturday, 09:00 to 18:00, and closed on Sundays and public
-holidays. Appointments run from 10:00 to 17:00.
+The outpatient clinic is open every day from 09:00 to 18:00, including weekends, and closed on
+public holidays. Appointments run from 10:00 to 17:00.

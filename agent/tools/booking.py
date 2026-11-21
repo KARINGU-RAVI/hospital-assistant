@@ -50,7 +50,9 @@ def _parse_date(value: str) -> date | str:
         return "date must be YYYY-MM-DD, 'today' or 'tomorrow'"
 
 
-def check_availability(date: str, department: str | None = None, doctor: str | None = None) -> list[dict] | dict:
+def check_availability(
+    date: str, department: str | None = None, doctor: str | None = None, limit: int = MAX_SLOTS
+) -> list[dict] | dict:
     """List free appointment slots on a date, optionally for one department or doctor.
     For today, only slots later than the current time are listed.
 
@@ -82,7 +84,7 @@ def check_availability(date: str, department: str | None = None, doctor: str | N
         sql += " AND lower(d.name) LIKE ?"
         params.append(f"%{name}%")
     sql += " ORDER BY s.time, d.name LIMIT ?"
-    params.append(MAX_SLOTS)
+    params.append(limit)
 
     try:
         with closing(connect()) as conn:

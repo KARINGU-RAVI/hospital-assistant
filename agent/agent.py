@@ -6,6 +6,7 @@ Tool wrappers here keep results compact (free-tier token limits); agent/tools/*.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import closing
 
@@ -16,34 +17,37 @@ from agent.db import connect
 from agent.models import run_with_fallback
 from agent.tools import booking
 from agent.tools.booking import SLOT_SELECT, manage_booking
-from agent.tools.departments import find_department
+from agent.tools.departments import find_department, list_doctors
 from agent.tools.rag import search_hospital_info
 
 NEEDS_CONFIRMATION = "needs_confirmation"
+MAX_TIMES = 30  # free times returned per call (a full day is 6 doctors x 4 times = 24)
 
-SYSTEM_PROMPT = """You are the front-desk assistant of Sunrise Clinic (a fictional clinic). You help patients
-find the right department, check doctor availability, and book, view or cancel appointments.
+SYSTEM_PROMPT = """You are the front-desk assistant of Sunrise Clinic (fictional): departments, doctors, free
+times, and booking, viewing or cancelling appointments.
 
 Rules:
-- Use the tools for every fact about departments, doctors, slots and bookings. Never invent any.
-- For symptoms, call find_department and name the department. Never diagnose, never guess a
-  condition, never suggest medicines or doses. For medical questions, say a clinic doctor will
-  advise them and offer to book.
-- EMERGENCY (chest pain, trouble breathing, heavy bleeding, someone unconscious, anything
-  life-threatening): tell them to call 108 or go to the nearest emergency room now. Do not book.
-- Booking has two steps. The first book_appointment call returns "needs_confirmation" with the
-  doctor, date and time: repeat them and ask the patient to confirm. Only after they say yes in
-  their next message, call book_appointment again with the same slot id. Do this even if the
-  patient already named the slot.
-- If the patient gives a time but no date, ask which day, or offer the next day with free slots.
+- Use the tools for every fact about departments, doctors, times and bookings; never invent any.
+  list_doctors is the only source of doctor names.
+- For symptoms, call find_department and name the department, then check availability in THAT
+  department unless the patient asks for another. Never diagnose, guess a condition, or suggest
+  medicines or doses; a clinic doctor will advise them.
+- Emergencies: tell them to call 108 or go to the nearest emergency room now. Do not book.
+- Show free times grouped by doctor. If a result has a "note", tell the patient.
+- Booking has two steps. The first book_appointment call returns "needs_confirmation" with doctor,
+  department, date and time: repeat them, say any "warning", and ask the patient to confirm. Only
+  after they say yes in their next message, call book_appointment again with the same doctor, date
+  and time. Do this even if the patient already named the time.
+- If the patient gives a time but no date, ask which day, or offer the next day with free times.
   Never assume today.
-- For clinic questions (hours, departments, insurance, fees, parking, documents, cancellations), call
-  search_hospital_info and answer only from its answers, naming the source file. If it returns no
-  answers, say "I don't have that information, please contact the front desk".
-- After booking, give the booking ID (starts with HSP-).
-- Never show slot ids or other internal IDs (booking IDs are fine).
-- If the patient asks for their usual doctor, use preferred_doctor from what is known about them.
-- Keep replies short: two or three sentences, or a short list of slots.
+- Suggest preferred_doctor ("usual doctor") only if they work in the department for the current
+  concern; otherwise say so, e.g. "Dr. Meena is ENT; for a headache General Medicine is better".
+- For clinic questions (hours, departments, fees, insurance, parking, documents, cancellations,
+  emergencies, contact), call search_hospital_info and answer only from its answers, naming the page,
+  e.g. "from our Visiting hours page". If there are no answers, say "I don't have that information,
+  please contact the front desk".
+- After booking, give the booking ID (starts with HSP-). Never show other internal IDs.
+- Keep replies short.
 """
 
 
@@ -57,9 +61,11 @@ def _patient_context(patient_id: str, patient_name: str, patient_facts: dict[str
     return "\n".join(lines)
 
 
+# --- availability -------------------------------------------------------------------------------
+
 @tool
 def check_availability(date: str, department: str | None = None, doctor: str | None = None) -> dict:
-    """List free appointment slots on a date, optionally for one department or doctor.
+    """List ALL free appointment times on a date, grouped by doctor, optionally for one department or doctor.
 
     Args:
         date: YYYY-MM-DD, or "today" / "tomorrow".
@@ -67,22 +73,93 @@ def check_availability(date: str, department: str | None = None, doctor: str | N
         doctor: Doctor name or surname, e.g. "Rao" (optional).
 
     Returns:
-        {"date", "slots": [{"id", "doctor", "time"}]} (max 8), or {"error": ...}.
+        {"date", "doctors": [{"doctor", "department", "times"}]} (+ "note" if cut off or empty), or {"error"}.
     """
-    result = booking.check_availability(date, department=department, doctor=doctor)
+    result = booking.check_availability(date, department=department, doctor=doctor, limit=MAX_TIMES + 1)
     if isinstance(result, dict):
         return result
-    day = result[0]["date"] if result else date
-    return {"date": day, "slots": [{"id": s["slot_id"], "doctor": s["doctor"], "time": s["time"]} for s in result]}
+    if not result:
+        return {"date": date, "doctors": [], "note": "no free times on this date for this search"}
+    cut_off = len(result) > MAX_TIMES
+    grouped: dict[str, dict] = {}
+    for slot in result[:MAX_TIMES]:
+        entry = grouped.setdefault(slot["doctor"], {"doctor": slot["doctor"], "department": slot["department"], "times": []})
+        entry["times"].append(slot["time"])
+    out = {"date": result[0]["date"], "doctors": sorted(grouped.values(), key=lambda d: (d["department"], d["doctor"]))}
+    if cut_off:
+        out["note"] = "only some free times are shown; ask for a department or doctor to see all of them"
+    return out
 
 
-def _last_patient_message(messages: list[dict]) -> int:
-    """Index of the patient's latest typed message (tool results are also role 'user'; skip them)."""
-    for i in range(len(messages) - 1, -1, -1):
-        content = messages[i].get("content", [])
-        if messages[i].get("role") == "user" and not any("toolResult" in block for block in content):
-            return i
-    return -1
+# --- booking ------------------------------------------------------------------------------------
+
+def _normalize_time(value: str) -> str | None:
+    """"10", "10:00", "4:30 pm", "16.30" -> "HH:MM"."""
+    match = re.fullmatch(r"\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?\s*", str(value or "").lower())
+    if not match:
+        return None
+    hour, minute, ampm = int(match.group(1)), int(match.group(2) or 0), match.group(3)
+    if ampm == "pm" and hour < 12:
+        hour += 12
+    if ampm == "am" and hour == 12:
+        hour = 0
+    return f"{hour:02d}:{minute:02d}" if hour < 24 and minute < 60 else None
+
+
+def find_slot(doctor: str, date: str, time: str) -> dict:
+    """The slot for doctor + date + time: {"slot_id", "doctor", "department", "date", "time"} or {"error"}."""
+    day = booking._parse_date(date)
+    if isinstance(day, str):
+        return {"error": day}
+    hhmm = _normalize_time(time)
+    if not hhmm:
+        return {"error": "time must look like 10:00 or 4:30 pm"}
+    name = str(doctor or "").strip().lower().removeprefix("dr.").removeprefix("dr ").strip()
+    if not name:
+        return {"error": "which doctor?"}
+    try:
+        with closing(connect()) as conn:
+            rows = conn.execute(
+                SLOT_SELECT + " WHERE lower(d.name) LIKE ? AND s.date = ? AND s.time = ?",
+                (f"%{name}%", day.isoformat(), hhmm),
+            ).fetchall()
+    except sqlite3.Error:
+        return {"error": "could not look up that time right now"}
+    if not rows:
+        return {"error": "no such slot: check the doctor, date and time with check_availability"}
+    if len(rows) > 1:
+        return {"error": "more than one doctor matches: " + ", ".join(r["doctor"] for r in rows)}
+    return dict(rows[0])
+
+
+def _slot_of(tool_input: dict) -> int | None:
+    """Slot id a book_appointment call referred to (doctor/date/time, or an older slot_id input)."""
+    if "slot_id" in tool_input:
+        return tool_input["slot_id"]
+    found = find_slot(tool_input.get("doctor", ""), tool_input.get("date", ""), tool_input.get("time", ""))
+    return found.get("slot_id")
+
+
+def _blocks(messages: list[dict]):
+    for message in messages:
+        yield from message.get("content", [])
+
+
+def _tool_results(messages: list[dict], tool_name: str):
+    """(input, parsed result) for each call of `tool_name` in `messages`, oldest first."""
+    inputs: dict[str, dict] = {}
+    for block in _blocks(messages):
+        use = block.get("toolUse")
+        if use and use.get("name") == tool_name:
+            inputs[use.get("toolUseId")] = use.get("input", {})
+        result = block.get("toolResult")
+        if result and result.get("toolUseId") in inputs:
+            for item in result.get("content", []):
+                try:
+                    data = json.loads(item.get("text", ""))
+                except (TypeError, ValueError):
+                    data = {"text": item.get("text", "")}
+                yield inputs[result["toolUseId"]], data
 
 
 def confirmation_requested(history: list[dict], slot_id: int) -> bool:
@@ -90,17 +167,19 @@ def confirmation_requested(history: list[dict], slot_id: int) -> bool:
 
     `history` must hold only EARLIER turns, so the patient has replied since the request.
     """
-    asked: set[str] = set()
-    for message in history:
-        for block in message.get("content", []):
-            use = block.get("toolUse")
-            if use and use.get("name") == "book_appointment" and str(use.get("input", {}).get("slot_id")) == str(slot_id):
-                asked.add(use.get("toolUseId"))
-            result = block.get("toolResult")
-            if result and result.get("toolUseId") in asked:
-                if any(NEEDS_CONFIRMATION in c.get("text", "") for c in result.get("content", [])):
-                    return True
-    return False
+    return any(
+        (data.get("result") == NEEDS_CONFIRMATION or NEEDS_CONFIRMATION in data.get("text", ""))
+        and str(_slot_of(tool_input)) == str(slot_id)
+        for tool_input, data in _tool_results(history, "book_appointment")
+    )
+
+
+def routed_department(messages: list[dict]) -> str | None:
+    """The department find_department chose most recently in `messages`, if any."""
+    department = None
+    for _, data in _tool_results(messages, "find_department"):
+        department = data.get("department") or department
+    return department
 
 
 def _earlier_turns(tool_context: ToolContext) -> list[dict]:
@@ -113,56 +192,66 @@ def _earlier_turns(tool_context: ToolContext) -> list[dict]:
     return messages[: max(_last_patient_message(messages), 0)]
 
 
-def _slot_details(slot_id: int) -> dict:
-    try:
-        with closing(connect()) as conn:
-            row = conn.execute(SLOT_SELECT + " WHERE s.id = ?", (slot_id,)).fetchone()
-    except sqlite3.Error:
-        return {"error": "could not look up that slot right now"}
-    if row is None:
-        return {"error": "no such slot"}
-    if booking.slot_has_passed(row["date"], row["time"]):
-        return {"error": "that time has already passed"}
-    return {"doctor": row["doctor"], "date": row["date"], "time": row["time"]}
+def _last_patient_message(messages: list[dict]) -> int:
+    """Index of the patient's latest typed message (tool results are also role 'user'; skip them)."""
+    for i in range(len(messages) - 1, -1, -1):
+        content = messages[i].get("content", [])
+        if messages[i].get("role") == "user" and not any("toolResult" in block for block in content):
+            return i
+    return -1
 
 
 @tool(context=True)
-def book_appointment(slot_id: int, patient_id: str, patient_name: str, tool_context: ToolContext) -> dict:
-    """Book a slot in two steps. First call: returns needs_confirmation with doctor, date, time (not
-    booked). After the patient says yes in their next message, call again with the same slot_id to book.
+def book_appointment(doctor: str, date: str, time: str, patient_id: str, patient_name: str,
+                     tool_context: ToolContext) -> dict:
+    """Book an appointment in two steps. First call: returns needs_confirmation with doctor, department,
+    date, time (and a warning if the department differs from the one chosen for the symptom); nothing is
+    booked. After the patient says yes in their next message, call again with the same values to book.
 
     Args:
-        slot_id: The slot id from check_availability.
+        doctor: Doctor name, e.g. "Dr. Rao".
+        date: YYYY-MM-DD, or "today" / "tomorrow".
+        time: Time from check_availability, e.g. "10:00".
         patient_id: The patient's ID.
         patient_name: The patient's full name.
 
     Returns:
-        {"result": "needs_confirmation", ...}, {"booking_id", "doctor", "date", "time"}, or {"error": ...}.
+        {"result": "needs_confirmation", ...}, {"booking_id", "doctor", "department", "date", "time"},
+        or {"error": ...}.
     """
-    if confirmation_requested(_earlier_turns(tool_context), slot_id):
-        return booking.book_appointment(slot_id, patient_id, patient_name)
-    details = _slot_details(slot_id)
-    if "error" in details:
-        return details
+    slot = find_slot(doctor, date, time)
+    if "error" in slot:
+        return slot
+    if booking.slot_has_passed(slot["date"], slot["time"]):
+        return {"error": "that time has already passed"}
+    earlier = _earlier_turns(tool_context)
+    if confirmation_requested(earlier, slot["slot_id"]):
+        booked = booking.book_appointment(slot["slot_id"], patient_id, patient_name)
+        return {**booked, "department": slot["department"]} if "booking_id" in booked else booked
+
+    details = {k: slot[k] for k in ("doctor", "department", "date", "time")}
+    routed = routed_department(earlier + tool_context.agent.messages)
+    if routed and routed != slot["department"]:
+        details["warning"] = (
+            f"{slot['doctor']} is {slot['department']}. For the patient's concern we suggested {routed}. "
+            "Ask if they want to book anyway."
+        )
     return {"result": NEEDS_CONFIRMATION, **details}
 
 
-TOOLS = [tool(find_department), check_availability, book_appointment, tool(manage_booking), tool(search_hospital_info)]
+TOOLS = [tool(find_department), tool(list_doctors), check_availability, book_appointment,
+         tool(manage_booking), tool(search_hospital_info)]
 
 
-def booked_doctor(new_messages: list[dict]) -> str | None:
-    """Doctor of a booking that succeeded in this turn (from book_appointment tool results), if any."""
-    doctor = None
-    for message in new_messages:
-        for block in message.get("content", []):
-            for item in block.get("toolResult", {}).get("content", []):
-                try:
-                    data = json.loads(item.get("text", ""))
-                except (TypeError, ValueError):
-                    continue
-                if isinstance(data, dict) and data.get("booking_id") and data.get("doctor"):
-                    doctor = data["doctor"]
-    return doctor
+# --- chat ---------------------------------------------------------------------------------------
+
+def booked_doctor(new_messages: list[dict]) -> tuple[str, str] | None:
+    """(doctor, department) of a booking that succeeded in these messages, if any."""
+    found = None
+    for _, data in _tool_results(new_messages, "book_appointment"):
+        if data.get("booking_id") and data.get("doctor"):
+            found = (data["doctor"], data.get("department", ""))
+    return found
 
 
 def _replace_last_reply(messages: list[dict], text: str) -> list[dict]:
@@ -200,8 +289,8 @@ def chat(
         messages = _replace_last_reply(messages, guarded["text"])
 
     new_facts = {"name": patient_name}
-    doctor = booked_doctor(messages[len(history):])
-    if doctor:
-        new_facts["preferred_doctor"] = doctor
+    booked = booked_doctor(messages[len(history):])
+    if booked:
+        new_facts["preferred_doctor"], new_facts["preferred_doctor_department"] = booked
     memory.save_turn(patient_id, session_id, prompt, guarded["text"], new_facts)
     return {"reply": guarded["text"], "messages": messages, "model_used": model_used}

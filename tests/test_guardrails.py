@@ -148,3 +148,31 @@ def test_switch_on_without_id_uses_local_quietly(monkeypatch, caplog):
         assert check_input("what dose should I take")["blocked"] is True
     assert not caplog.records
     config.get_settings.cache_clear()
+
+
+# --- emergencies and self-harm (always local, before AWS or the model) ---
+@pytest.mark.parametrize("text", ["I have chest pain", "my child had a seizure", "I fell and I'm bleeding a lot",
+                                  "my son has fits since morning", "there was a serious accident"])
+def test_emergency_message(switches, text):
+    switches(False)
+    assert check_input(text) == {"blocked": True, "text": EMERGENCY_MESSAGE}
+
+
+@pytest.mark.parametrize("text", ["I feel like ending my life", "I want to kill myself", "I don't want to live anymore"])
+def test_self_harm_gets_helpline(switches, text):
+    client = FakeBedrock(response={"action": "NONE", "outputs": []})
+    switches(True, client)
+    result = check_input(text)
+    assert result["blocked"] and "108" in result["text"] and "14416" in result["text"] and "1800-89-14416" in result["text"]
+    assert client.calls == []
+
+
+@pytest.mark.parametrize("text", ["what are the benefits of insurance", "I had a minor accident last week, can I see orthopedics"])
+def test_not_emergencies(switches, text):
+    switches(False)
+    assert check_input(text)["blocked"] is False
+
+
+def test_helpline_numbers_survive_phone_masking():
+    from agent.guardrails import SELF_HARM_MESSAGE
+    assert mask_phones(SELF_HARM_MESSAGE) == SELF_HARM_MESSAGE

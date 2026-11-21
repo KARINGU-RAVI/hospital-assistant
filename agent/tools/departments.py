@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import re
+import sqlite3
+from contextlib import closing
+
+from agent.db import connect
 
 DEFAULT_DEPARTMENT = "General Medicine"
 
@@ -46,3 +50,26 @@ def find_department(symptom: str) -> dict:
         "department": DEFAULT_DEPARTMENT,
         "reason": "General Medicine can see you first and refer you if needed.",
     }
+
+
+def list_doctors(department: str | None = None) -> dict:
+    """List the clinic's doctors and their departments (the only source of truth for doctor names).
+
+    Args:
+        department: Only doctors in this department, e.g. "ENT" (optional).
+
+    Returns:
+        {"doctors": [{"doctor", "department"}]} or {"error": ...}.
+    """
+    sql = "SELECT d.name AS doctor, dep.name AS department FROM doctors d JOIN departments dep ON dep.id = d.department_id"
+    params: list = []
+    if department:
+        sql += " WHERE lower(dep.name) LIKE ?"
+        params.append(f"%{department.strip().lower()}%")
+    sql += " ORDER BY dep.name, d.name"
+    try:
+        with closing(connect()) as conn:
+            doctors = [dict(r) for r in conn.execute(sql, params)]
+    except sqlite3.Error:
+        return {"error": "could not list doctors right now"}
+    return {"doctors": doctors} if doctors else {"error": f"no department matching {department!r}"}
