@@ -1,0 +1,10 @@
+strands-agents[gemini,openai]
+strands-agents-tools
+bedrock-agentcore
+boto3
+chromadb
+fastembed
+streamlit
+python-dotenv
+requests
+pytest

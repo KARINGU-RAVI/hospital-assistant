@@ -1,0 +1,23 @@
+# secrets
+.env
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# generated data
+data/hospital.db
+data/chroma/
+data/models/
+
+# AgentCore toolkit / logs
+.bedrock_agentcore*
+*.log
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
