@@ -10,11 +10,16 @@ from agent.config import get_settings
 PATIENT_ID, PATIENT_NAME = "P001", "Ravi"
 
 
+def setup_logging() -> None:
+    """Show only our one-line warnings (fallbacks); silence library chatter."""
+    logging.basicConfig(level=logging.WARNING, format="%(message)s")
+    for noisy in ("strands", "httpx", "google_genai", "openai", "chromadb", "fastembed", "botocore", "bedrock_agentcore"):
+        logging.getLogger(noisy).setLevel(logging.ERROR)
+
+
 def main() -> None:
     """Simple chat loop as patient P001 / Ravi. Keeps the conversation between turns."""
-    logging.basicConfig(level=logging.WARNING, format="%(message)s")
-    for noisy in ("strands", "httpx", "google_genai", "openai"):  # keep only our one-line fallback logs
-        logging.getLogger(noisy).setLevel(logging.ERROR)
+    setup_logging()
 
     if not get_settings().db_path.exists():
         print("No database yet. Run: python data\\seed.py")

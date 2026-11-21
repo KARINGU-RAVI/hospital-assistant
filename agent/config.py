@@ -105,7 +105,7 @@ def get_settings() -> Settings:
         rag_mode=_str("RAG_MODE", "vector").lower(),
         rag_max_distance=_float("RAG_MAX_DISTANCE", 0.40),
         app_mode=_str("APP_MODE", "local").lower(),
-        local_agent_url=_str("LOCAL_AGENT_URL", "http://localhost:8080/invocations"),
+        local_agent_url=_str("LOCAL_AGENT_URL", "http://127.0.0.1:8080/invocations"),
         agent_runtime_arn=_str("AGENT_RUNTIME_ARN"),
         db_path=_path("DB_PATH", "data/hospital.db"),
         chroma_path=_path("CHROMA_PATH", "data/chroma"),
