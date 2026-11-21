@@ -160,17 +160,45 @@ def approx_tokens(messages: list[dict]) -> int:
     return len(json.dumps(messages, ensure_ascii=False, default=str)) // 4
 
 
-def trim_history(messages: list[dict], max_messages: int, max_tokens: int) -> list[dict]:
-    """The longest recent part of the history within both limits that starts at a patient message.
-
-    Starting at a patient message means a tool call is never cut off from its tool result.
-    If even the last turn is too big, returns [] (the model then sees only the new message).
-    """
+def _window(messages: list[dict], max_messages: int, max_tokens: int) -> list[dict]:
+    """The longest recent part within both limits that starts at a patient message (or [])."""
     for start in range(len(messages)):
         tail = messages[start:]
         if len(tail) <= max_messages and _is_patient_message(tail[0]) and approx_tokens(tail) <= max_tokens:
             return tail
     return []
+
+
+def text_only(messages: list[dict]) -> list[dict]:
+    """Each turn as two messages: the patient's text and the assistant's last text reply.
+
+    Tool calls and their results are dropped together, so no tool call loses its result.
+    """
+    out: list[dict] = []
+    reply: dict | None = None
+    for message in messages:
+        if _is_patient_message(message):
+            if reply:
+                out.append(reply)
+            out.append(message)
+            reply = None
+        elif message.get("role") == "assistant":
+            texts = [b for b in message.get("content", []) if "text" in b and b["text"].strip()]
+            if texts:
+                reply = {"role": "assistant", "content": texts}
+    if reply:
+        out.append(reply)
+    return out
+
+
+def trim_history(messages: list[dict], max_messages: int, max_tokens: int) -> list[dict]:
+    """Recent history within both limits for the model, never cutting a tool call from its result.
+
+    First the raw recent turns (starting at a patient message). If even the last turn is too big
+    (several tool calls), fall back to a text-only version (patient text + assistant reply per turn),
+    so the model still knows what the patient is answering, e.g. "yes" to a booking question.
+    """
+    return _window(messages, max_messages, max_tokens) or _window(text_only(messages), max_messages, max_tokens)
 
 
 def run_with_fallback(

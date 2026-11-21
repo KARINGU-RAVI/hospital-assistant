@@ -50,10 +50,22 @@ def test_token_limit_wins_over_message_limit():
     assert trimmed == _turn_with_tools(2, size=10)
 
 
-def test_never_starts_with_a_tool_result():
-    history = [_user("q"), _tool_use("a"), _tool_result("a"), _tool_use("b"), _tool_result("b"),
-               _tool_use("c"), _tool_result("c"), _assistant("done")]  # one turn, 8 messages
-    assert trim_history(history, 6, 3000) == []  # can't cut inside the turn
+def test_oversized_turn_falls_back_to_text_only():
+    """Bug found live: a booking turn with several tool calls was dropped entirely, so the model
+    didn't know what the patient's "yes" referred to."""
+    history = [_user("book Dr. Kapoor on the 24th at 15:00"), _tool_use("a"), _tool_result("a"),
+               _tool_use("b"), _tool_result("b"), _tool_use("c"), _tool_result("c"),
+               _assistant("Shall I book Dr. Kapoor on 24 Nov at 15:00?")]  # one turn, 8 messages
+    assert trim_history(history, 6, 3000) == [
+        _user("book Dr. Kapoor on the 24th at 15:00"), _assistant("Shall I book Dr. Kapoor on 24 Nov at 15:00?")]
+
+
+def test_text_only_keeps_last_reply_per_turn_and_no_tool_blocks():
+    from agent.models import text_only
+    mixed = {"role": "assistant", "content": [{"text": "Let me check."}, {"toolUse": {"toolUseId": "x", "name": "n", "input": {}}}]}
+    history = [_user("q1"), mixed, _tool_result("x"), _assistant("a1"), _user("q2"), _tool_use("y"), _tool_result("y"), _assistant("a2")]
+    assert text_only(history) == [_user("q1"), _assistant("a1"), _user("q2"), _assistant("a2")]
+    assert _pairs_intact(text_only(history))
 
 
 def test_every_window_keeps_pairs_together():
@@ -63,4 +75,4 @@ def test_every_window_keeps_pairs_together():
             trimmed = trim_history(history, max_messages, max_tokens)
             assert len(trimmed) <= max_messages and approx_tokens(trimmed) <= max_tokens
             assert _pairs_intact(trimmed)
-            assert not trimmed or trimmed[0]["content"][0].get("text")
+            assert not trimmed or trimmed[0]["role"] == "user" and trimmed[0]["content"][0].get("text")

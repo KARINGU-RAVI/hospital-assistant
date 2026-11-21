@@ -9,6 +9,11 @@ Phase 6 resources are removed with the AgentCore CLI, from the project folder:
     agentcore remove all --yes
     agentcore deploy --yes          # an empty project tears down the deployed stack
 
+AFTER RECORDING THE DEMO: the AgentCore CLI turned on CloudWatch Transaction Search with 100% span
+indexing (needed for AgentCore traces; 1% indexing is free). Lower it with (AWS docs,
+Enable-TransactionSearch page; PowerShell quoting):
+    aws xray update-indexing-rule --name "Default" --rule '{\"Probabilistic\": {\"DesiredSamplingPercentage\": 1}}' --region ap-south-1
+
 FINAL TEARDOWN (only when you are completely done with AgentCore in this account/region):
 the AgentCore CLI creates the standard CDK bootstrap stack "CDKToolkit" on first deploy, and
 `agentcore remove all` does not delete it. From the installed bootstrap template (aws-cdk, version 32):
@@ -84,6 +89,7 @@ def main() -> None:
     print("Done. Set GUARDRAILS_ENABLED=false and MEMORY_ENABLED=false in .env. "
           "Check the AWS console that nothing is left.")
     print("If you deployed the runtime (Phase 6): run `agentcore remove all --yes` then `agentcore deploy --yes`.")
+    print("After the demo: lower CloudWatch Transaction Search indexing to 1% (command at the top of this file).")
     print("Final teardown of the CDK bootstrap stack: see the notes at the top of this file and the README.")
 
 

@@ -50,7 +50,12 @@ AWS (Phases 4–6) costs a few rupees to about ₹60 in total; resources are tor
 ## Teardown
 1. `python scriptsws_teardown.py` deletes the guardrail and the memory (type DELETE).
 2. `agentcore remove all --yes`, then `agentcore deploy --yes`, deletes the deployed runtime stack.
-3. **Final teardown only:** the first `agentcore deploy` creates the standard CDK bootstrap stack
+3. **After recording the demo:** the AgentCore CLI turned on CloudWatch Transaction Search with
+   100% span indexing (AgentCore traces need it; the docs say 1% indexing is free). Lower it to 1%:
+   ```powershell
+   aws xray update-indexing-rule --name "Default" --rule '{\"Probabilistic\": {\"DesiredSamplingPercentage\": 1}}' --region ap-south-1
+   ```
+4. **Final teardown only:** the first `agentcore deploy` creates the standard CDK bootstrap stack
    `CDKToolkit`, which step 2 does not remove. Its S3 bucket is versioned and retained when the stack
    is deleted, according to the installed bootstrap template (the CDK docs give no removal steps):
    ```powershell
