@@ -15,6 +15,7 @@ from agent.models import run_with_fallback
 from agent.tools import booking
 from agent.tools.booking import SLOT_SELECT, manage_booking
 from agent.tools.departments import find_department
+from agent.tools.rag import search_hospital_info
 
 NEEDS_CONFIRMATION = "needs_confirmation"
 
@@ -34,6 +35,9 @@ Rules:
   patient already named the slot.
 - If the patient gives a time but no date, ask which day, or offer the next day with free slots.
   Never assume today.
+- For clinic questions (hours, departments, insurance, fees, parking, documents, cancellations), call
+  search_hospital_info and answer only from its answers, naming the source file. If it returns no
+  answers, say "I don't have that information, please contact the front desk".
 - After booking, give the booking ID (starts with HSP-).
 - Never show slot ids or other internal IDs (booking IDs are fine).
 - Keep replies short: two or three sentences, or a short list of slots.
@@ -140,7 +144,7 @@ def book_appointment(slot_id: int, patient_id: str, patient_name: str, tool_cont
     return {"result": NEEDS_CONFIRMATION, **details}
 
 
-TOOLS = [tool(find_department), check_availability, book_appointment, tool(manage_booking)]
+TOOLS = [tool(find_department), check_availability, book_appointment, tool(manage_booking), tool(search_hospital_info)]
 
 
 def chat(

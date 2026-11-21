@@ -32,6 +32,13 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+def _float(name: str, default: float) -> float:
+    try:
+        return float(_str(name, str(default)))
+    except ValueError:
+        return default
+
+
 def _path(name: str, default: str) -> Path:
     p = Path(_str(name, default))
     return p if p.is_absolute() else PROJECT_ROOT / p
@@ -63,6 +70,7 @@ class Settings:
     memory_id: str
     # rag
     rag_mode: str
+    rag_max_distance: float
     # app
     app_mode: str
     local_agent_url: str
@@ -71,6 +79,7 @@ class Settings:
     db_path: Path
     chroma_path: Path
     faq_path: Path
+    models_path: Path
 
 
 @lru_cache(maxsize=1)
@@ -94,12 +103,14 @@ def get_settings() -> Settings:
         memory_enabled=_bool("MEMORY_ENABLED"),
         memory_id=_str("MEMORY_ID"),
         rag_mode=_str("RAG_MODE", "vector").lower(),
+        rag_max_distance=_float("RAG_MAX_DISTANCE", 0.40),
         app_mode=_str("APP_MODE", "local").lower(),
         local_agent_url=_str("LOCAL_AGENT_URL", "http://localhost:8080/invocations"),
         agent_runtime_arn=_str("AGENT_RUNTIME_ARN"),
         db_path=_path("DB_PATH", "data/hospital.db"),
         chroma_path=_path("CHROMA_PATH", "data/chroma"),
         faq_path=_path("FAQ_PATH", "data/faq"),
+        models_path=_path("MODELS_PATH", "data/models"),
     )
 
 
