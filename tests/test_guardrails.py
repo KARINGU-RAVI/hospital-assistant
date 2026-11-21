@@ -39,6 +39,11 @@ class FakeBedrock:
     "what disease do I have, my head hurts",
     "please diagnose my rash",
     "is 500 mg too much",
+    "should I take paracetamol for this fever?",
+    "can I take two tablets at night",
+    "which antibiotic can I take",
+    "what's my diagnosis?",
+    "can you diagnose this",
 ])
 def test_local_blocks_medical_advice(switches, text):
     switches(False)
@@ -53,6 +58,12 @@ def test_local_blocks_medical_advice(switches, text):
     "what are the visiting hours?",
     "how much does a consultation cost?",
     "cancel booking HSP-1006",
+    "which documents should I take",
+    "which documents should I take to my first visit?",
+    "which bus should I take to the clinic",
+    "do you do diagnostic tests?",
+    "should I take my old reports and prescriptions along?",
+    "can I take my child to the ENT doctor",
 ])
 def test_local_passes_normal_requests(switches, text):
     switches(False)

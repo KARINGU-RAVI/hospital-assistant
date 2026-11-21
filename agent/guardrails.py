@@ -29,13 +29,20 @@ EMERGENCY = re.compile(
 )
 
 # Local fallback for medical advice (the Bedrock guardrail's denied topics do this when enabled).
+_MEDICINE = (
+    r"(medicines?|medications?|tablets?|pills?|capsules?|syrups?|injections?|drugs?|antibiotics?|painkillers?|"
+    r"paracetamol|ibuprofen|aspirin|crocin|dolo|\d+\s?mg|doses?|dosage)"
+)
 MEDICAL_ADVICE = re.compile(
-    r"\bdose\b|\bdosage\b|\bdoses\b|\b\d+\s?mg\b|how (many|much) (tablets?|pills?|mg|medicine)|"
+    r"\bdoses?\b|\bdosage\b|\b\d+\s?mg\b|how (many|much) (tablets?|pills?|mg|medicine)|"
     r"(what|which) (medicine|medication|tablet|drug|antibiotic|painkiller|pill)s? (should|can|do) i|"
-    r"should i take|can i take .*(medicine|tablet|pill|paracetamol|ibuprofen|antibiotic)|"
-    r"prescribe|prescription for|"
+    # "should/can I take" only near a medicine word ("which bus should I take" is fine)
+    rf"\b(should|can|could|do) i (take|have|use)\b[^.?!]{{0,40}}\b{_MEDICINE}\b|"
+    rf"\b{_MEDICINE}\b[^.?!]{{0,40}}\b(should|can|could) i (take|have|use)\b|"
+    r"\bprescribe\b|prescription for|"
     r"(what|which) (disease|illness|condition|infection) (do|might|could) i have|do i have (cancer|diabetes|covid|an? )|"
-    r"what'?s wrong with me|\bdiagnos(e|is)\b",
+    # the verb "diagnose" and "my diagnosis", but not "diagnostic tests"
+    r"what'?s wrong with me|\bdiagnose\b|\bmy diagnosis\b|\bdiagnosis (for|of) (me|my)\b",
     re.I,
 )
 
