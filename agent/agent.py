@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
-from datetime import date
 
 from strands import ToolContext, tool
 
@@ -33,6 +32,8 @@ Rules:
   doctor, date and time: repeat them and ask the patient to confirm. Only after they say yes in
   their next message, call book_appointment again with the same slot id. Do this even if the
   patient already named the slot.
+- If the patient gives a time but no date, ask which day, or offer the next day with free slots.
+  Never assume today.
 - After booking, give the booking ID (starts with HSP-).
 - Never show slot ids or other internal IDs (booking IDs are fine).
 - Keep replies short: two or three sentences, or a short list of slots.
@@ -41,7 +42,7 @@ Rules:
 
 def _patient_context(patient_id: str, patient_name: str, patient_facts: dict[str, str] | None) -> str:
     lines = [
-        f"Today is {date.today().isoformat()}.",
+        f"Now: {booking._now().strftime('%A %Y-%m-%d %H:%M')} (clinic local time).",
         f"Patient: {patient_name} (patient_id {patient_id}). Use exactly these when booking; don't ask for them.",
     ]
     if patient_facts:
@@ -113,6 +114,8 @@ def _slot_details(slot_id: int) -> dict:
         return {"error": "could not look up that slot right now"}
     if row is None:
         return {"error": "no such slot"}
+    if booking.slot_has_passed(row["date"], row["time"]):
+        return {"error": "that time has already passed"}
     return {"doctor": row["doctor"], "date": row["date"], "time": row["time"]}
 
 

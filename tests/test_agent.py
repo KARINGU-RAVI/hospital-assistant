@@ -1,6 +1,6 @@
 """Phase 2 tests: confirm-before-booking is enforced in code. Offline: scripted fake model, real Strands loop."""
 from contextlib import closing
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
@@ -25,7 +25,7 @@ def setup(tmp_path, monkeypatch):
                  "GEMINI_MODEL_ID": "g"}.items():
         monkeypatch.setenv(k, v)
     config.get_settings.cache_clear()
-    monkeypatch.setattr(booking, "_today", lambda: TODAY)
+    monkeypatch.setattr(booking, "_now", lambda: datetime(2030, 1, 7, 9, 0))
     seed(path, today=TODAY)
     fake = FakeModel()
     monkeypatch.setattr(models, "build_model", lambda name: fake)
@@ -122,3 +122,16 @@ def test_check_availability_result_is_compact(setup):
     text = _tool_results(messages)[-1]
     assert '"slots"' in text and '"department"' not in text and '"slot_id"' not in text
     assert text.count('"id"') <= 8
+
+
+def test_confirmation_step_rejects_past_time(setup, monkeypatch):
+    fake, path, slot, _ = setup  # slot is tomorrow (2030-01-08)
+    monkeypatch.setattr(booking, "_now", lambda: datetime(2030, 1, 9, 9, 0))
+    messages = _turn(fake, [], "book it", _book(slot), "Sorry.")
+    assert "that time has already passed" in _tool_results(messages)[-1]
+    assert _bookings(path) == 0
+
+
+def test_prompt_says_never_assume_today():
+    from agent.agent import SYSTEM_PROMPT
+    assert "Never assume today" in SYSTEM_PROMPT and len(SYSTEM_PROMPT.split()) < 300

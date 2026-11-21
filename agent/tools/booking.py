@@ -22,9 +22,19 @@ SLOT_SELECT = """
 """
 
 
+def _now() -> datetime:
+    """Current local date and time (a function so tests can pin it)."""
+    return datetime.now()
+
+
 def _today() -> date:
-    """Today's date (a function so tests can pin it)."""
-    return date.today()
+    """Today's date, from _now() (a function so tests can pin it)."""
+    return _now().date()
+
+
+def slot_has_passed(day: str, time: str) -> bool:
+    """True if the slot's date AND time are already in the past."""
+    return f"{day} {time}" <= _now().strftime("%Y-%m-%d %H:%M")
 
 
 def _parse_date(value: str) -> date | str:
@@ -40,12 +50,9 @@ def _parse_date(value: str) -> date | str:
         return "date must be YYYY-MM-DD, 'today' or 'tomorrow'"
 
 
-def _is_past(day: str) -> bool:
-    return date.fromisoformat(day) < _today()
-
-
 def check_availability(date: str, department: str | None = None, doctor: str | None = None) -> list[dict] | dict:
     """List free appointment slots on a date, optionally for one department or doctor.
+    For today, only slots later than the current time are listed.
 
     Args:
         date: The day to check, as YYYY-MM-DD, or "today" / "tomorrow".
@@ -63,9 +70,10 @@ def check_availability(date: str, department: str | None = None, doctor: str | N
 
     sql = SLOT_SELECT + """
         WHERE s.date = ?
+          AND s.date || ' ' || s.time > ?
           AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.slot_id = s.id AND b.status = 'booked')
     """
-    params: list = [day.isoformat()]
+    params: list = [day.isoformat(), _now().strftime("%Y-%m-%d %H:%M")]
     if department:
         sql += " AND lower(dep.name) LIKE ?"
         params.append(f"%{department.strip().lower()}%")
@@ -107,8 +115,8 @@ def book_appointment(slot_id: int, patient_id: str, patient_name: str) -> dict:
             slot = conn.execute(SLOT_SELECT + " WHERE s.id = ?", (slot_id,)).fetchone()
             if slot is None:
                 return {"error": "no such slot"}
-            if _is_past(slot["date"]):
-                return {"error": "that slot is in the past"}
+            if slot_has_passed(slot["date"], slot["time"]):
+                return {"error": "that time has already passed"}
             details = {"doctor": slot["doctor"], "date": slot["date"], "time": slot["time"]}
 
             active = conn.execute(

@@ -1,6 +1,6 @@
 """Phase 1 tests: symptom routing and booking tools. Offline, temp DB, fixed 'today'."""
 from contextlib import closing
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
@@ -12,6 +12,7 @@ from agent.tools.departments import find_department
 from data.seed import seed
 
 TODAY = date(2030, 1, 7)
+NOW = datetime(2030, 1, 7, 9, 0)  # before the first slot of the day
 TOMORROW = "2030-01-08"
 
 
@@ -20,7 +21,7 @@ def db(tmp_path, monkeypatch):
     """Fresh seeded DB in a temp folder; tools read its path from config."""
     path = tmp_path / "hospital.db"
     monkeypatch.setenv("DB_PATH", str(path))
-    monkeypatch.setattr(booking, "_today", lambda: TODAY)
+    monkeypatch.setattr(booking, "_now", lambda: NOW)
     config.get_settings.cache_clear()
     seed(path, today=TODAY)
     yield path
@@ -118,8 +119,8 @@ def test_booking_errors(db):
 
 def test_past_slot_cannot_be_booked(db, monkeypatch):
     slot_id = _free_slot()
-    monkeypatch.setattr(booking, "_today", lambda: date(2030, 2, 1))
-    assert "error" in book_appointment(slot_id, "P-1", "Ravi")
+    monkeypatch.setattr(booking, "_now", lambda: datetime(2030, 2, 1, 9, 0))
+    assert book_appointment(slot_id, "P-1", "Ravi") == {"error": "that time has already passed"}
 
 
 # --- view / cancel ---
@@ -142,3 +143,53 @@ def test_view_and_cancel_frees_slot(db):
 def test_manage_booking_errors(db):
     assert "error" in manage_booking("HSP-0000", "view")
     assert "error" in manage_booking("HSP-1001", "delete")
+
+
+# --- past times today (bug: at 22:44 it booked today's 10:00) ---
+LATE = datetime(2026, 11, 21, 22, 44)
+LATE_TODAY, LATE_TOMORROW = "2026-11-21", "2026-11-22"
+
+
+@pytest.fixture
+def late_evening(tmp_path, monkeypatch):
+    """DB seeded for 2026-11-21, clock pinned at 22:44, plus one extra slot today at 23:30."""
+    path = tmp_path / "hospital.db"
+    monkeypatch.setenv("DB_PATH", str(path))
+    config.get_settings.cache_clear()
+    seed(path, today=LATE.date())
+    monkeypatch.setattr(booking, "_now", lambda: LATE)
+    with closing(connect(path)) as conn, conn:
+        conn.execute("INSERT INTO slots(doctor_id, date, time) VALUES (1, ?, '23:30')", (LATE_TODAY,))
+    yield path
+    config.get_settings.cache_clear()
+
+
+def _slot_id(path, day, time, doctor="Dr. Sharma"):
+    with closing(connect(path)) as conn:
+        return conn.execute(
+            "SELECT s.id FROM slots s JOIN doctors d ON d.id = s.doctor_id WHERE s.date = ? AND s.time = ? AND d.name = ?",
+            (day, time, doctor),
+        ).fetchone()[0]
+
+
+def test_today_lists_only_later_slots(late_evening):
+    today = check_availability("today", doctor="Sharma")
+    assert [s["time"] for s in today] == ["23:30"]
+    assert all(s["time"] > "22:44" for s in check_availability(LATE_TODAY))
+
+
+def test_past_time_today_cannot_be_booked(late_evening):
+    slot = _slot_id(late_evening, LATE_TODAY, "10:00")
+    assert book_appointment(slot, "P-1", "Ravi") == {"error": "that time has already passed"}
+
+
+def test_later_today_and_tomorrow_can_be_booked(late_evening):
+    assert "booking_id" in book_appointment(_slot_id(late_evening, LATE_TODAY, "23:30"), "P-1", "Ravi")
+    assert "10:00" in [s["time"] for s in check_availability("tomorrow", doctor="Sharma")]
+    assert "booking_id" in book_appointment(_slot_id(late_evening, LATE_TOMORROW, "10:00"), "P-1", "Ravi")
+
+
+def test_slot_at_exactly_now_has_passed(late_evening, monkeypatch):
+    monkeypatch.setattr(booking, "_now", lambda: datetime(2026, 11, 21, 23, 30))
+    assert booking.slot_has_passed(LATE_TODAY, "23:30")
+    assert not booking.slot_has_passed(LATE_TOMORROW, "10:00")

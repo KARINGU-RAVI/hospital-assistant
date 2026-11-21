@@ -180,6 +180,10 @@ def _boto_error(code: str, message: str = "test") -> BotoClientError:
     _boto_error("ValidationException", "Invocation of model ID x with on-demand throughput isn't supported."),
     _boto_error("ValidationException", "The provided model identifier is invalid."),
     _boto_error("ThrottlingException"),
+    _boto_error("NotAuthorized"),
+    _boto_error("MPAgreementBeingCreated"),
+    _boto_error("FTUFormNotFilled"),
+    _boto_error("ResourceNotFoundException"),
     ModelThrottledException("throttled"),  # how Strands wraps Bedrock throttling (cause set below)
 ])
 def test_bedrock_unavailable_falls_back(chain, caplog, monkeypatch, error):

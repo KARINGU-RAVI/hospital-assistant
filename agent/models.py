@@ -30,8 +30,12 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 TIMEOUT_S = 30
 LAST_MODEL_RETRY_WAIT_S = 2.0
 PARAMS = {"temperature": 0.2}
-# Bedrock errors that mean "Bedrock can't serve us right now" (no access, throttled).
-BEDROCK_UNAVAILABLE_CODES = {"AccessDeniedException", "ThrottlingException"}
+# Bedrock errors that mean "Bedrock can't serve us right now" (no access, throttled, model access
+# not set up). Codes from the Bedrock troubleshooting page and the Converse API reference.
+BEDROCK_UNAVAILABLE_CODES = {
+    "AccessDeniedException", "ThrottlingException", "NotAuthorized",
+    "MPAgreementBeingCreated", "FTUFormNotFilled", "ResourceNotFoundException",
+}
 # ValidationException falls back ONLY with these messages (model not usable by this account/region);
 # any other ValidationException is likely our own request bug and must raise.
 # Wording from installed strands-agents 1.65.0 (models/bedrock.py); AWS docs don't publish these strings.
