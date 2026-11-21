@@ -83,6 +83,15 @@ def test_agentcore_json_from_template_with_env_vars(project):
     envs = {e["name"]: e["value"] for e in runtime["envVars"]}
     assert envs["GEMINI_API_KEY"] == "gem-secret" and envs["MEMORY_ID"] == "mem-123"
     assert "OPENROUTER_API_KEY" not in envs  # empty values are left out
+
+
+def test_unusable_model_keys_are_not_shipped(project, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-secret")
+    monkeypatch.setenv("OPENROUTER_MODEL_ID", "")  # key set but no model: can never be used
+    config.get_settings.cache_clear()
+    build_runtime.build(config.get_settings(), None, None)
+    cfg = json.loads((project / "agentcore" / "agentcore.json").read_text(encoding="utf-8"))
+    assert "OPENROUTER_API_KEY" not in {e["name"] for e in cfg["runtimes"][0]["envVars"]}
     assert not any(name.endswith("_PATH") for name in envs)  # paths are set by the entry, not .env
     template = json.loads(build_runtime.TEMPLATE.read_text(encoding="utf-8"))
     assert "envVars" not in json.dumps(template) and "secret" not in json.dumps(template)  # committed file stays clean

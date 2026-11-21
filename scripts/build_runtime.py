@@ -142,8 +142,13 @@ def resource_arns(settings) -> tuple[str | None, str | None]:
 def env_vars(settings) -> list[dict]:
     import os
 
+    from agent.models import is_configured
+
     values = {name: os.getenv(name, "").strip() for name in ENV_NAMES}
     values["MODEL_CHAIN"] = ",".join(settings.model_chain)
+    for provider in ("gemini", "groq", "openrouter"):  # don't ship keys of models that can't be used
+        if provider not in settings.model_chain or not is_configured(provider, settings):
+            values[f"{provider.upper()}_API_KEY"] = ""
     return [{"name": k, "value": v} for k, v in values.items() if v]
 
 
