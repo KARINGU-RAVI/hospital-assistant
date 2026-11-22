@@ -8,6 +8,8 @@ Phase 4: guardrail + memory.
 Phase 6 resources are removed with the AgentCore CLI, from the project folder:
     agentcore remove all --yes
     agentcore deploy --yes          # an empty project tears down the deployed stack
+  (the runtime's CloudWatch log group /aws/bedrock-agentcore/runtimes/... is left behind; delete it
+  in the CloudWatch console if you want nothing left)
 
 AFTER RECORDING THE DEMO: the AgentCore CLI turned on CloudWatch Transaction Search with 100% span
 indexing (needed for AgentCore traces; 1% indexing is free). Lower it with (AWS docs,

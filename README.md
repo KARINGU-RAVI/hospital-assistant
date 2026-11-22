@@ -16,7 +16,7 @@ Repository: https://github.com/KARINGU-RAVI/hospital-assistant
 - [x] Phase 3 — RAG
 - [x] Phase 4 — Guardrails + Memory
 - [x] Phase 5 — AgentCore entrypoint + Streamlit UI
-- [ ] Phase 6 — deploy to AgentCore Runtime
+- [x] Phase 6 — deploy to AgentCore Runtime
 - [ ] Phase 7 — polish
 
 Build guides: `docs/phases/`. Rules for Claude Code: `CLAUDE.md`.
@@ -50,6 +50,8 @@ AWS (Phases 4–6) costs a few rupees to about ₹60 in total; resources are tor
 ## Teardown
 1. `python scriptsws_teardown.py` deletes the guardrail and the memory (type DELETE).
 2. `agentcore remove all --yes`, then `agentcore deploy --yes`, deletes the deployed runtime stack.
+   It leaves the runtime's CloudWatch log group (`/aws/bedrock-agentcore/runtimes/...`, a few KB,
+   never expires). Delete it in the CloudWatch console if you want nothing left at all.
 3. **After recording the demo:** the AgentCore CLI turned on CloudWatch Transaction Search with
    100% span indexing (AgentCore traces need it; the docs say 1% indexing is free). Lower it to 1%:
    ```powershell
